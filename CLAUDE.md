@@ -114,3 +114,9 @@ A title can appear on multiple channels — this is intentional and expected.
 - `GET /library/sections/{key}/all?type=2` — all TV shows with full metadata
 
 No dependencies beyond the Python standard library.
+
+## Git Workflow
+
+- Commit messages must be verbose and descriptive — explain what changed and why, not just "fix bug" or "update script".
+- Update this file (CLAUDE.md) whenever a feature changes: new flags, API behavior changes, schema updates, new scripts, or removed functionality.
+- After any feature change: update CLAUDE.md, commit with a detailed message, and push to origin.
