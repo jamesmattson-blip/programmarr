@@ -19,6 +19,7 @@ import time
 import uuid
 import urllib.error
 import urllib.request
+from datetime import datetime, timezone
 
 CONFIG_FILE = "config.json"
 DEFAULT_CHANNELS_FILE = "channels.json"
@@ -210,7 +211,7 @@ def create_channel(tunarr_url, number, name, transcode_id):
             "id": channel_id,
             "number": number,
             "name": name,
-            "startTime": 0,
+            "startTime": int(datetime.now(timezone.utc).timestamp() * 1000),
             "duration": 0,
             "groupTitle": "tunarr",
             "guideMinimumDuration": 30000,
