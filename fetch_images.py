@@ -239,8 +239,10 @@ def main():
 
     # ── Normal mode: fetch logos for single-content channels ───────────────────
 
-    # Filter to solo-content channels
-    solo = [ch for ch in channels_def if len(ch.get("content", [])) == 1]
+    # Filter to solo-content channels (skip collection references — they're multi-title)
+    solo = [ch for ch in channels_def
+            if len(ch.get("content", [])) == 1
+            and isinstance(ch["content"][0], str)]
     if args.channel:
         solo = [ch for ch in solo if ch["number"] == args.channel]
         if not solo:

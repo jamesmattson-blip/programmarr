@@ -137,7 +137,7 @@ def print_manual_instructions(tunarr_url):
     xmltv_url = f"{tunarr_url}/api/xmltv.xml"
     print()
     print("  Manual setup steps:")
-    print("  1. Open Plex → Settings → Live TV & DVR")
+    print("  1. Open Plex > Settings > Live TV & DVR")
     print("  2. Click 'Set Up Plex DVR'")
     print("  3. Select Tunarr as the DVR device")
     print("  4. When asked for a guide source, enter this URL:")
