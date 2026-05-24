@@ -78,7 +78,8 @@ See `config.json.example` for the template.
 - Detects missing `config.json` on first run and walks through interactive setup
 - Always runs `create.py --probe` before deploying; asks confirmation before applying
 - Offers Plex sync after every successful deploy
-- Collections path reads `channels.json` to compute a smart default for `--base`
+- Collections path reads `channels.json` to compute a smart default for `--base`; passes `--from <base>` to create.py so only collection-block channels are touched (preserves images on lower channels)
+- AI path runs a 5-question prompt generator before the manual LLM step — asks channel count, era focus, TV style, priority franchises, and anything to deprioritize. Writes a ready-to-copy `prompt_for_llm.md` (gitignored) with `{TARGET}` filled in and a `## My Preferences` section injected
 - Utilities submenu: fetch images (dry run then confirm), sync Plex
 
 **`export.py`**

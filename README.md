@@ -92,9 +92,15 @@ Queries Plex directly for full metadata and writes `plex_library.csv`:
 
 ### Step 2A — AI path (recommended)
 
-Open `PROMPT.md`, set `{TARGET}` to your desired channel count (e.g. `30`), then paste the full prompt **plus** the contents of `plex_library.csv` into any LLM — Gemini, Claude, or ChatGPT all work well.
+If you're using `channelmaker.py` (recommended), the AI path handles this for you — it asks a few questions about your preferences and writes a ready-to-copy `prompt_for_llm.md` with everything filled in.
+
+If running manually: open `PROMPT.md`, set `{TARGET}` to your desired channel count, then send it to any LLM (Claude Opus, Gemini Pro, GPT-4o) along with `plex_library.csv` — either as a file attachment or pasted inline.
 
 Save the JSON output as `channels.json`.
+
+**Tips:**
+- Use the largest model available — speed-optimized models (Flash, Mini, Lite) tend to produce incomplete results on a task this size
+- Aim for ~1 channel per 15–20 titles in your library as a starting point for `{TARGET}`
 
 The AI will:
 - Create themed channels using only titles that exist in your library
