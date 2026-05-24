@@ -1,4 +1,5 @@
 config.json
+channels.json
 *.csv
 backup_*.json
 __pycache__/

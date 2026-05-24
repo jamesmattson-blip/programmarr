@@ -1,0 +1,12 @@
+{
+  "channels": [
+    {
+      "number": 10,
+      "name": "My Show 24/7",
+      "shuffle": "ordered",
+      "content": ["Exact Title From Plex"]
+    }
+  ],
+  "orphaned": [],
+  "suggested_channels": []
+}
