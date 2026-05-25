@@ -77,10 +77,14 @@ See `config.json.example` for the template.
 - Flat main menu: `1` AI path, `2` No-AI path, `3` Collections, `i` fetch images, `s` sync Plex, `q` quit — no submenus
 - Detects missing `config.json` on first run and walks through interactive setup
 - Always runs `create.py --probe` before deploying; asks confirmation before applying
-- **Full pipeline (options 1 & 2):** build `channels.json` → optionally append collections (same base/min-items/condense prompts, smart base computed from just-written `channels.json`) → probe → deploy (full deploy, no `--from`) → optionally fetch images (`--apply` directly, no dry-run) → sync Plex
+- **Full pipeline (options 1 & 2):** build `channels.json` → optionally append collections → check Tunarr for existing channels → user picks deploy scope → probe → deploy → optionally fetch images → sync Plex → pause for manual Plex steps
+- **Pre-deploy scope check:** fetches live channel list from Tunarr before the probe; if channels exist, asks the user to choose between a full wipe-and-rebuild or preserving channels below a given number (passes `--from N` to protect manually-created or lower-block channels and their custom images)
+- **Collections in pipeline:** smart base number is computed from AI/No-AI channels only (ignores existing collection-reference channels so re-running doesn't push the base higher each time); same base/min-items/condense prompts as the standalone path
 - **Collections standalone (option 3):** generates collection block → probe → deploy (`--from <base>`, preserves lower channels and their images) → optionally fetch images → sync Plex
 - **Image fetch standalone (`i`):** dry-run preview → confirm → apply
-- AI path copies `PROMPT.md` to `prompt_for_llm.md` (gitignored) for the user to paste into their LLM; preference-question injection is stubbed for future implementation
+- **End of every workflow:** pauses after Plex sync with a tip about deleting and re-adding the Tunarr DVR in Plex if channels aren't showing; user presses Enter to return to the main menu
+- **AI path prompt generation:** asks for target channel count (replaces `{TARGET}` in prompt) and optional theme/channel preferences (injected as a `## User Preferences` section before channel numbering rules); writes personalised prompt to `prompt_for_llm.md` (gitignored); `PROMPT.md` stays as the clean reusable template
+- **LLM output format:** expects JSONL (one channel object per line); `validate_and_fix_channels_json()` auto-detects and converts bare JSON arrays and JSONL to the internal `{"channels": [...]}` dict format before any script reads it — old-format files continue to work
 
 **`export.py`**
 - Fetches full metadata directly from Plex API (`/library/sections/{key}/all`)

@@ -54,36 +54,21 @@ Each channel must have one of these shuffle types:
 
 ## Output Format
 
-Output ONLY valid JSON in exactly this schema. No markdown fences, no commentary outside the JSON.
+Output one channel per line as a JSON object (JSONL). No wrapper object, no markdown fences, no commentary between lines — just one `{...}` per line.
 
-```json
-{
-  "channels": [
-    {
-      "number": 10,
-      "name": "Channel Name",
-      "shuffle": "ordered",
-      "content": [
-        "Exact Title From CSV",
-        "Another Exact Title"
-      ]
-    }
-  ],
-  "orphaned": [
-    {
-      "title": "Some Title",
-      "reason": "One-sentence explanation of why it did not fit any channel"
-    }
-  ],
-  "suggested_channels": [
-    {
-      "name": "Suggested Channel Name",
-      "reason": "Why this channel makes sense",
-      "content": ["Title A", "Title B"]
-    }
-  ]
-}
 ```
+{"number": 10, "name": "Breaking Bad Marathon", "shuffle": "ordered", "content": ["Breaking Bad"]}
+{"number": 20, "name": "Crime TV Block", "shuffle": "block", "content": ["The Wire", "Ozark", "Justified"]}
+{"number": 30, "name": "80s Action Movies", "shuffle": "shuffle", "content": ["Die Hard", "Lethal Weapon", "Predator"]}
+```
+
+Each line must have exactly these fields:
+- `number` — integer channel number following the scheme above
+- `name` — string channel name
+- `shuffle` — one of `ordered`, `shuffle`, or `block`
+- `content` — array of title strings copied exactly from the CSV
+
+After the channel list, you may add a brief plain-text note listing any notable orphaned titles and why they didn't fit.
 
 ## The Library
 

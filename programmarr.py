@@ -5,6 +5,7 @@ import json
 import os
 import subprocess
 import sys
+import urllib.request
 
 RESET  = "\033[0m"
 BOLD   = "\033[1m"
@@ -100,6 +101,26 @@ def setup_config():
 
 # ── Shared steps ──────────────────────────────────────────────────────────────
 
+def load_config():
+    path = os.path.join(SCRIPT_DIR, "config.json")
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def fetch_tunarr_channels():
+    """Return the list of channels currently in Tunarr, or None on failure."""
+    config = load_config()
+    url = config.get("tunarr_url", "").rstrip("/") + "/api/channels"
+    try:
+        with urllib.request.urlopen(url, timeout=5) as resp:
+            return json.loads(resp.read())
+    except Exception:
+        return None
+
+
 def load_channels_json():
     path = os.path.join(SCRIPT_DIR, "channels.json")
     if not os.path.exists(path):
@@ -109,6 +130,86 @@ def load_channels_json():
             return json.load(f)
     except Exception:
         return None
+
+
+def validate_and_fix_channels_json(path):
+    """Ensure channels.json is usable. Handles JSON dict, bare array, and JSONL."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            raw = f.read()
+    except OSError as e:
+        error(f"Could not read channels.json: {e}")
+        return False
+
+    # Try standard JSON first (dict or bare array)
+    try:
+        data = json.loads(raw)
+        if isinstance(data, dict) and "channels" in data:
+            return True
+        if isinstance(data, list):
+            warn("channels.json is a bare JSON array — wrapping automatically.")
+            data = {"channels": data, "orphaned": [], "suggested_channels": []}
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+            success(f"channels.json ready: {len(data['channels'])} channels.")
+            return True
+        error('channels.json must have a "channels" key. Fix it and try again.')
+        return False
+    except json.JSONDecodeError:
+        pass
+
+    # Try JSONL — one channel object per line
+    channels = []
+    bad_lines = []
+    for i, line in enumerate(raw.splitlines(), 1):
+        line = line.strip()
+        if not line or not line.startswith("{"):
+            continue
+        try:
+            obj = json.loads(line)
+            if isinstance(obj, dict) and "number" in obj:
+                channels.append(obj)
+            else:
+                bad_lines.append(i)
+        except json.JSONDecodeError:
+            bad_lines.append(i)
+
+    if bad_lines:
+        warn(f"Skipped {len(bad_lines)} malformed line(s): {bad_lines}")
+
+    if not channels:
+        error("channels.json contains no valid channel objects. Fix it and try again.")
+        return False
+
+    warn(f"Detected JSONL format — converting ({len(channels)} channels).")
+    data = {"channels": channels, "orphaned": [], "suggested_channels": []}
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+    success(f"channels.json ready: {len(channels)} channels.")
+    return True
+
+
+def confirm_deploy_scope():
+    """Check Tunarr for existing channels and let the user choose deploy scope.
+    Returns extra_args to pass to probe_and_deploy ([] for full wipe, ['--from', N] for partial)."""
+    existing = fetch_tunarr_channels()
+
+    if not existing:
+        return []
+
+    nums = sorted(ch.get("number", 0) for ch in existing)
+    count = len(nums)
+    print(f"\n{YELLOW}[!] Tunarr currently has {count} channel(s) (#{nums[0]}–#{nums[-1]}).{RESET}")
+    print(f"\n  1) Wipe all and deploy fresh  {DIM}(full rebuild — recommended when channels.json changed significantly){RESET}")
+    print(f"  2) Preserve channels below a number  {DIM}(keep lower channels and their custom images){RESET}")
+
+    choice = input("\nChoice [1]: ").strip() or "1"
+
+    if choice == "2":
+        from_num = ask("Preserve channels below number", str(nums[-1] + 1))
+        return ["--from", from_num]
+
+    return []
 
 
 def probe_and_deploy(extra_args=None):
@@ -135,25 +236,29 @@ def probe_and_deploy(extra_args=None):
     return True
 
 
+def is_collection_channel(ch):
+    return any(isinstance(item, dict) for item in ch.get("content", []))
+
+
 def offer_collections_pipeline():
     """Offer to append Plex collections to channels.json inside the AI/No-AI pipeline."""
-    if not ask_yn("\nInclude Plex collections as channels?", default="n"):
-        return
-
     data = load_channels_json()
     max_ch = 0
     channel_count = 0
     if data and "channels" in data:
-        nums = [ch.get("number", 0) for ch in data["channels"]]
+        ai_channels = [ch for ch in data["channels"] if not is_collection_channel(ch)]
+        nums = [ch.get("number", 0) for ch in ai_channels]
         max_ch = max(nums) if nums else 0
-        channel_count = len(nums)
+        channel_count = len(ai_channels)
 
     if max_ch:
         suggested_base = ((max_ch // 10) + 1) * 10
-        suggested_base = max(suggested_base, 80)
-        print(f"{DIM}Current channels.json: {channel_count} channels, highest #{max_ch}{RESET}\n")
+        print(f"\n{DIM}channels.json: {channel_count} channels, highest #{max_ch} — collections would start at #{suggested_base}{RESET}")
     else:
         suggested_base = 80
+
+    if not ask_yn("Include Plex collections as channels?", default="n"):
+        return
 
     base      = ask("Start collection channels at number", str(suggested_base))
     min_items = ask("Skip collections with fewer than N items", "3")
@@ -183,20 +288,52 @@ def offer_plex_sync():
     if ask_yn("\nSync channels to Plex DVR?", default="y"):
         step("Syncing Plex...")
         run(["sync_plex.py"])
+        print(f"""
+{BOLD}Plex tip:{RESET} If channels aren't showing up in the Plex guide, the easiest fix is to
+delete the Tunarr DVR in Plex and re-add it — Plex will re-import all channels fresh.
+
+  Plex Settings → Live TV & DVR → (your Tunarr device) → Delete → Add device again.
+""")
+    input(f"{DIM}Press Enter to return to the main menu...{RESET}")
 
 
 # ── Prompt generator ──────────────────────────────────────────────────────────
-# TODO: re-implement preference questions here and inject them into the prompt
-# before the ## The Library section. Stub retained for future use.
 
 def generate_prompt():
-    """Copy PROMPT.md to prompt_for_llm.md without modification."""
+    """Build prompt_for_llm.md from PROMPT.md, injecting user preferences if provided."""
     prompt_path = os.path.join(SCRIPT_DIR, "PROMPT.md")
     out_path = os.path.join(SCRIPT_DIR, "prompt_for_llm.md")
+
     with open(prompt_path, encoding="utf-8") as f:
         base = f.read()
+
+    print()
+    target = input(
+        f"How many channels do you want? {DIM}(rule of thumb: ~1 per 15–20 titles — press Enter to skip){RESET}\n"
+        f"> "
+    ).strip()
+    if target:
+        base = base.replace("{TARGET}", target)
+
+    prefs = input(
+        f"\nAny specific channels or themes you want?\n"
+        f"{DIM}e.g. Batman, Documentaries, 90s, TGIF, Cartoons — press Enter to skip{RESET}\n"
+        f"> "
+    ).strip()
+
+    if prefs:
+        injection = (
+            "\n## User Preferences\n\n"
+            "The user has specifically requested the following channels or themes. "
+            "Treat these as high-priority — if the library has enough content to support them, "
+            "they must appear in the output:\n\n"
+            f"{prefs}\n"
+        )
+        base = base.replace("## Channel Numbering Scheme", injection + "\n## Channel Numbering Scheme")
+
     with open(out_path, "w", encoding="utf-8") as f:
         f.write(base)
+
     success("Prompt written to prompt_for_llm.md")
     return out_path
 
@@ -235,7 +372,7 @@ def workflow_ai():
      {BOLD}Option B (works everywhere):{RESET} paste the full contents of the CSV
      directly after the prompt.
 
-  4. Save the JSON output as:
+  4. Save the output (one channel per line) as:
      {CYAN}{channels_path}{RESET}
 """)
 
@@ -245,9 +382,13 @@ def workflow_ai():
         error("channels.json not found - aborting.")
         return
 
+    if not validate_and_fix_channels_json(channels_path):
+        return
+
     offer_collections_pipeline()
 
-    if probe_and_deploy():
+    scope = confirm_deploy_scope()
+    if probe_and_deploy(extra_args=scope):
         offer_images_pipeline()
         offer_plex_sync()
 
@@ -269,7 +410,8 @@ def workflow_no_ai():
 
     offer_collections_pipeline()
 
-    if probe_and_deploy():
+    scope = confirm_deploy_scope()
+    if probe_and_deploy(extra_args=scope):
         offer_images_pipeline()
         offer_plex_sync()
 
@@ -281,9 +423,10 @@ def workflow_collections():
     max_ch = 0
     channel_count = 0
     if data and "channels" in data:
-        nums = [ch.get("number", 0) for ch in data["channels"]]
+        ai_channels = [ch for ch in data["channels"] if not is_collection_channel(ch)]
+        nums = [ch.get("number", 0) for ch in ai_channels]
         max_ch = max(nums) if nums else 0
-        channel_count = len(nums)
+        channel_count = len(ai_channels)
 
     if max_ch:
         suggested_base = ((max_ch // 10) + 1) * 10
