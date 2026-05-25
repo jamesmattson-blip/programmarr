@@ -39,15 +39,35 @@ First run shows an onboarding wizard — create a login, enter your Tunarr and P
 
 ### Updates
 
-The image is rebuilt and pushed automatically on every commit. To update:
+Add [Watchtower](https://containrrr.dev/watchtower/) to your compose file and updates happen automatically — no SSH, no manual pulls, no Portainer. Watchtower checks every 5 minutes and restarts the container if a new image is available:
+
+```yaml
+services:
+  programmarr:
+    image: ghcr.io/alpinearchitecture/programmarr:latest
+    container_name: programmarr
+    restart: unless-stopped
+    ports:
+      - "7979:7979"
+    volumes:
+      - ./data:/data
+
+  watchtower:
+    image: containrrr/watchtower
+    container_name: watchtower
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: --interval 300 programmarr
+    restart: unless-stopped
+```
+
+Or update manually any time:
 
 ```bash
 docker compose pull && docker compose up -d
 ```
 
-Or use the **Update** button in Portainer / TrueNAS Apps if you're using the `image:` reference below.
-
-### TrueNAS (Custom App UI)
+### TrueNAS
 
 Paste this as a complete compose file in Apps → Custom App:
 
@@ -61,9 +81,17 @@ services:
       - "7979:7979"
     volumes:
       - /mnt/YourPool/AppData/programmarr/data:/data
+
+  watchtower:
+    image: containrrr/watchtower
+    container_name: watchtower
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: --interval 300 programmarr
+    restart: unless-stopped
 ```
 
-Replace `/mnt/YourPool/AppData/programmarr/data` with a real path on your TrueNAS pool. TrueNAS will show an **Update** button whenever a new image is pushed.
+Replace `/mnt/YourPool/AppData/programmarr/data` with a real path on your pool.
 
 ---
 

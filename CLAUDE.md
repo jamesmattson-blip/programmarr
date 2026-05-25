@@ -76,9 +76,11 @@ docker compose build && docker compose up
 
 The `docker-compose.yml` mounts `./data` as a volume, so your `config.json`, `channels.json`, and `plex_library.csv` persist between runs. To pick up code changes, rebuild: `docker compose build && docker compose up`.
 
+Note: `backend/static/` is **gitignored** — the Dockerfile builds the frontend from source inside the container (`npm run build` runs during `docker build`). Never commit files under `backend/static/`.
+
 Two environments:
 - **localhost:7979** — local Docker build for testing before pushing
-- **TrueNAS** — production, pulls image from GHCR automatically on every `master` push via GitHub Actions
+- **TrueNAS** — production, runs `ghcr.io/alpinearchitecture/programmarr:latest` with Watchtower for automatic updates. New images land on GHCR within ~1 min of a master push; Watchtower picks them up within 5 min.
 
 ## Workflow
 
