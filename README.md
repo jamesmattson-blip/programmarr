@@ -37,11 +37,12 @@ http://<your-server-ip>:7979
 
 First run shows an onboarding wizard — create a login, enter your Tunarr and Plex URLs, done.
 
-### TrueNAS / existing Docker stack
+### TrueNAS (Custom App UI)
 
-Add this block to your existing `docker-compose.yml`:
+Paste this as a complete compose file in Apps → Custom App:
 
 ```yaml
+services:
   programmarr:
     build: https://github.com/AlpineArchitecture/programmarr.git
     container_name: programmarr
@@ -49,10 +50,10 @@ Add this block to your existing `docker-compose.yml`:
     ports:
       - "7979:7979"
     volumes:
-      - /mnt/tank/programmarr/data:/data
+      - /mnt/YourPool/AppData/programmarr/data:/data
 ```
 
-Then `docker compose up -d programmarr`.
+Replace `/mnt/YourPool/AppData/programmarr/data` with a real path on your TrueNAS pool.
 
 ---
 
