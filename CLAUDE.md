@@ -39,7 +39,7 @@ backend/          FastAPI app + routers
     config_router.py    GET/POST /api/config, /api/config/status
     status_router.py    GET /api/status (Plex+Tunarr ping), /api/tunarr/channels
     channels_router.py  CRUD /api/channels, /api/channels/{n}, /api/library/titles
-    pipeline_router.py  SSE-streaming pipeline endpoints (export, probe, deploy, etc.)
+    pipeline_router.py  SSE-streaming pipeline endpoints (export, probe, deploy, deploy-selective, collections, etc.)
     logs_router.py      GET /api/logs, /api/logs/{name}
 frontend/         React + Mantine SPA (built to backend/static/)
   src/pages/
@@ -62,7 +62,23 @@ data/             Bind-mounted volume — config.json, channels.json, plex_libra
 - Auth middleware reads `config.json` on every request — no restart needed to enable/disable auth
 - Onboarding shown automatically when `config_status.configured` is false (no Tunarr/Plex/token set)
 - Channels page reads from `channels.json` (local file), Dashboard reads live from Tunarr API
+- `asyncio.WindowsProactorEventLoopPolicy` is set at startup in `main.py` — required on Windows for `asyncio.create_subprocess_exec` to work; no-op on Linux/Docker
 - **Deferred (Tier 3):** drag-to-reorder channels, autocomplete from plex_library.csv, inline Plex validation
+
+## Local Development (Docker)
+
+The recommended local dev loop is Docker — it gives exact production parity and avoids Windows asyncio/subprocess issues:
+
+```powershell
+# From repo root — builds frontend, bakes into image, runs on localhost:7979
+docker compose build && docker compose up
+```
+
+The `docker-compose.yml` mounts `./data` as a volume, so your `config.json`, `channels.json`, and `plex_library.csv` persist between runs. To pick up code changes, rebuild: `docker compose build && docker compose up`.
+
+Two environments:
+- **localhost:7979** — local Docker build for testing before pushing
+- **TrueNAS** — production, pulls image from GHCR automatically on every `master` push via GitHub Actions
 
 ## Workflow
 
@@ -140,7 +156,7 @@ See `config.json.example` for the template.
 - Fetches full metadata directly from Plex API (`/library/sections/{key}/all`)
 - Fields: title, year, contentRating, genres, directors, season/episode counts
 - Cross-references against Tunarr to flag unsynced content
-- Output: `plex_library.csv`
+- Output: `plex_library.csv` + `export_summary.json` (movies/tv_shows/skipped counts for the UI stats card)
 
 **`generate_no_ai.py`** (Option B — no AI required)
 - Reads `plex_library.csv`
@@ -242,6 +258,48 @@ A title can appear on multiple channels — this is intentional and expected.
 - `GET /3/tv/{id}/images?include_image_language=en,null` — fetch logo images for a TV show
 - `GET /3/movie/{id}/images?include_image_language=en,null` — fetch logo images for a movie
 - Images served from `https://image.tmdb.org/t/p/original/{file_path}`
+
+## Pipeline API Endpoints (backend/routers/pipeline_router.py)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/pipeline/export` | SSE-stream `export.py` |
+| GET | `/api/pipeline/csv` | Download `plex_library.csv` |
+| GET | `/api/pipeline/csv/info` | Stats: rows, movies, tv_shows, skipped counts, preview lines |
+| GET | `/api/pipeline/prompt` | Fetch `PROMPT.md` with `{TARGET}` and preferences injected |
+| POST | `/api/pipeline/validate` | Parse/validate LLM output (file upload or raw text), write `channels.json` |
+| POST | `/api/pipeline/no-ai` | SSE-stream `generate_no_ai.py` |
+| GET | `/api/pipeline/collections` | Fetch all Plex collections (id, name, count, section, summary, has_poster) |
+| GET | `/api/pipeline/collections/{id}/poster` | Proxy Plex collection poster image |
+| POST | `/api/pipeline/collections/apply` | Write selected collections into `channels.json` |
+| POST | `/api/pipeline/probe` | SSE-stream `create.py --probe` |
+| POST | `/api/pipeline/deploy` | SSE-stream `create.py` (full deploy) |
+| POST | `/api/pipeline/deploy-selective` | Filter channels by `DeploySelection[]`, write `deploy_temp.json`, SSE-stream `create.py --json deploy_temp.json` |
+| POST | `/api/pipeline/images` | SSE-stream `fetch_images.py --apply` |
+| POST | `/api/pipeline/sync` | SSE-stream `sync_plex.py` |
+
+## Run.tsx — Pipeline Stepper UI
+
+`frontend/src/pages/Run.tsx` implements a multi-step pipeline wizard with three paths (tabs): **AI**, **No-AI**, **Collections**.
+
+**Shared patterns:**
+- `streamPipeline(endpoint, params, onEvent, body?)` — SSE stream with optional JSON body for selective deploy
+- `parseProbeChannels(lines)` — parses `[PROBE] #N name | shuffle=X | summary` lines from probe output into `ChannelSel[]`
+- Stepper navigation is locked: only completed steps are clickable, future steps are grayed out
+
+**AI Path (6 steps):**
+1. **Export** — runs `export.py`, shows compact stats card (movies / TV shows / skipped / size) above terminal; manual Continue
+2. **LLM Handoff** — config card (channel count NumberInput + theme Textarea); side-by-side prompt copy + CSV download; paste/upload LLM output; post-validate results card showing channel breakdown; "Add Plex Collections" or "Skip to Deploy" buttons
+3. **Add Plex Collections** — fetches collections on mount; 2-column grid with poster, name, count, editable channel number, checkbox (all checked by default); applies selections to `channels.json`
+4. **Deploy** — probe explainer card; runs probe; after probe completes: 2-column layout [terminal | scrollable channel review card with checkboxes + editable channel numbers]; selective deploy via `/pipeline/deploy-selective`
+5. **Fetch Images** — skippable step; runs `fetch_images.py --apply`
+6. **Sync Plex** — skippable step; runs `sync_plex.py`; post-deploy stats + links to Tunarr and Plex Live TV
+
+**No-AI Path (6 steps):** Same as AI but step 2 runs `generate_no_ai.py` instead of LLM handoff.
+
+**Collections Path (4 steps):** Collections → Deploy → Fetch Images → Sync Plex (no export or LLM).
+
+**`deploy_temp.json`:** Written by `/pipeline/deploy-selective` when the user excludes channels from a deploy session. The original `channels.json` is not modified — only the channels the user chose are deployed.
 
 ## Plex API Endpoints Used
 

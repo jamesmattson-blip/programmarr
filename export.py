@@ -252,6 +252,14 @@ def main():
 
     print(f"\nDone. Feed {args.out} to your LLM with the prompt in PROMPT.md")
 
+    with open("export_summary.json", "w", encoding="utf-8") as f:
+        json.dump({
+            "movies": movies_written,
+            "tv_shows": shows_written,
+            "skipped_movies": len(skipped_movies),
+            "skipped_shows": len(skipped_shows),
+        }, f)
+
 
 if __name__ == "__main__":
     main()

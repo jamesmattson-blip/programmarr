@@ -2,17 +2,48 @@ import asyncio
 import json
 import os
 import sys
+import urllib.error
+import urllib.request
 from datetime import datetime
 from pathlib import Path
 from typing import AsyncGenerator, Optional
 
-from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Query, Response, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
+from pydantic import BaseModel
 
 router = APIRouter()
 DATA_DIR = Path(os.environ.get("PROGRAMMARR_DATA", Path(__file__).parent.parent.parent))
 SCRIPTS_DIR = Path(os.environ.get("PROGRAMMARR_SCRIPTS", Path(__file__).parent.parent.parent))
 LOGS_DIR = DATA_DIR / "logs"
+
+
+def _load_config() -> dict:
+    try:
+        with open(DATA_DIR / "config.json") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _plex_get(base_url: str, token: str, path: str, timeout: int = 30):
+    sep = "&" if "?" in path else "?"
+    url = f"{base_url}{path}{sep}X-Plex-Token={token}"
+    req = urllib.request.Request(url, headers={"Accept": "application/json"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return json.loads(r.read())
+
+
+class CollectionSelection(BaseModel):
+    name: str
+    channel_number: int
+    include: bool
+
+
+class DeploySelection(BaseModel):
+    original_number: int
+    deploy_number: int
+    include: bool
 
 
 def _env():
@@ -75,20 +106,47 @@ def download_csv():
 
 @router.get("/pipeline/csv/info")
 def csv_info():
+    import csv as _csv
     p = DATA_DIR / "plex_library.csv"
     if not p.exists():
         return {"exists": False}
     stat = p.stat()
-    rows, preview = 0, []
+    rows, movies, tv_shows, preview = 0, 0, 0, []
     try:
         with open(p, encoding="utf-8") as f:
             for i, line in enumerate(f):
-                rows += 1
                 if i < 21:
                     preview.append(line.rstrip())
+        with open(p, encoding="utf-8") as f:
+            reader = _csv.DictReader(f)
+            for row in reader:
+                rows += 1
+                t = row.get("Type", "")
+                if t == "Movie":
+                    movies += 1
+                elif t == "TV":
+                    tv_shows += 1
     except Exception:
         pass
-    return {"exists": True, "size": stat.st_size, "rows": max(0, rows - 1), "modified": stat.st_mtime, "preview": preview}
+    result: dict = {
+        "exists": True,
+        "size": stat.st_size,
+        "rows": rows,
+        "movies": movies,
+        "tv_shows": tv_shows,
+        "modified": stat.st_mtime,
+        "preview": preview,
+    }
+    summary_p = DATA_DIR / "export_summary.json"
+    if summary_p.exists():
+        try:
+            with open(summary_p) as f:
+                s = json.load(f)
+                result["skipped_movies"] = s.get("skipped_movies", 0)
+                result["skipped_shows"] = s.get("skipped_shows", 0)
+        except Exception:
+            pass
+    return result
 
 
 @router.get("/pipeline/prompt")
@@ -180,6 +238,30 @@ async def run_deploy(from_channel: Optional[str] = Query(None)):
     return _sse(_stream("create.py", args, "deploy"))
 
 
+@router.post("/pipeline/deploy-selective")
+async def run_deploy_selective(selections: list[DeploySelection]):
+    channels_path = DATA_DIR / "channels.json"
+    if not channels_path.exists():
+        raise HTTPException(404, "channels.json not found")
+
+    with open(channels_path, encoding="utf-8") as f:
+        data = json.load(f)
+
+    sel_map = {s.original_number: s for s in selections if s.include}
+    new_channels = [
+        {**ch, "number": sel_map[ch["number"]].deploy_number}
+        for ch in data.get("channels", [])
+        if ch.get("number") in sel_map
+    ]
+    data["channels"] = new_channels
+
+    temp_path = DATA_DIR / "deploy_temp.json"
+    with open(temp_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+
+    return _sse(_stream("create.py", ["--json", "deploy_temp.json"], "deploy"))
+
+
 @router.post("/pipeline/images")
 async def run_images():
     return _sse(_stream("fetch_images.py", ["--apply"], "images"))
@@ -188,3 +270,87 @@ async def run_images():
 @router.post("/pipeline/sync")
 async def run_sync():
     return _sse(_stream("sync_plex.py", [], "sync"))
+
+
+@router.get("/pipeline/collections")
+def list_collections():
+    cfg = _load_config()
+    plex_url = cfg.get("plex_url", "").rstrip("/")
+    plex_token = cfg.get("plex_token", "")
+    if not plex_url or not plex_token:
+        raise HTTPException(400, "Plex not configured")
+    try:
+        sections_data = _plex_get(plex_url, plex_token, "/library/sections")
+        sections = sections_data["MediaContainer"].get("Directory", [])
+    except Exception as e:
+        raise HTTPException(502, f"Could not reach Plex: {e}")
+
+    results = []
+    seen: set[str] = set()
+    for section in sections:
+        try:
+            col_data = _plex_get(plex_url, plex_token, f"/library/sections/{section['key']}/collections")
+            for c in col_data.get("MediaContainer", {}).get("Metadata", []):
+                name = c.get("title", "").strip()
+                if not name or name in seen:
+                    continue
+                seen.add(name)
+                results.append({
+                    "id": c.get("ratingKey", ""),
+                    "name": name,
+                    "count": int(c.get("childCount", 0)),
+                    "section": section.get("title", ""),
+                    "summary": c.get("summary", ""),
+                    "has_poster": bool(c.get("thumb", "")),
+                })
+        except Exception:
+            continue
+    return results
+
+
+@router.get("/pipeline/collections/{collection_id}/poster")
+def collection_poster(collection_id: str):
+    cfg = _load_config()
+    plex_url = cfg.get("plex_url", "").rstrip("/")
+    plex_token = cfg.get("plex_token", "")
+    if not plex_url or not plex_token:
+        raise HTTPException(400, "Plex not configured")
+    url = f"{plex_url}/library/metadata/{collection_id}/thumb?X-Plex-Token={plex_token}"
+    try:
+        req = urllib.request.Request(url)
+        with urllib.request.urlopen(req, timeout=10) as r:
+            content = r.read()
+            content_type = r.headers.get("Content-Type", "image/jpeg")
+        return Response(content=content, media_type=content_type)
+    except Exception as e:
+        raise HTTPException(502, f"Could not fetch poster: {e}")
+
+
+@router.post("/pipeline/collections/apply")
+def apply_collections(selections: list[CollectionSelection]):
+    channels_path = DATA_DIR / "channels.json"
+    if channels_path.exists():
+        with open(channels_path, encoding="utf-8") as f:
+            data = json.load(f)
+    else:
+        data = {"channels": [], "orphaned": [], "suggested_channels": []}
+
+    included = [s for s in selections if s.include]
+    if not included:
+        return {"ok": True, "added": 0}
+
+    min_ch = min(s.channel_number for s in included)
+    kept = [ch for ch in data.get("channels", []) if ch.get("number", 0) < min_ch]
+    new_channels = [
+        {
+            "number": s.channel_number,
+            "name": s.name,
+            "shuffle": "shuffle",
+            "content": [{"collection": s.name}],
+        }
+        for s in sorted(included, key=lambda x: x.channel_number)
+    ]
+    data["channels"] = kept + new_channels
+    with open(channels_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+    return {"ok": True, "added": len(new_channels)}

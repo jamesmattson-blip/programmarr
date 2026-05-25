@@ -51,6 +51,13 @@ export const api = {
 
   getLogs: () => req<LogEntry[]>('/logs'),
   getLog: (name: string) => req<{ name: string; content: string }>(`/logs/${name}`),
+
+  getCollections: () => req<PlexCollection[]>('/pipeline/collections'),
+  applyCollections: (selections: CollectionSelection[]) =>
+    req<{ ok: boolean; added: number }>('/pipeline/collections/apply', {
+      method: 'POST',
+      body: JSON.stringify(selections),
+    }),
 };
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -64,8 +71,20 @@ export interface Channel {
   content: (string | { collection: string })[];
 }
 export interface ChannelsFile { channels: Channel[]; orphaned: string[]; suggested_channels: string[] }
-export interface CsvInfo { exists: boolean; rows?: number; size?: number; modified?: number; preview?: string[] }
+export interface CsvInfo {
+  exists: boolean;
+  rows?: number;
+  size?: number;
+  modified?: number;
+  preview?: string[];
+  movies?: number;
+  tv_shows?: number;
+  skipped_movies?: number;
+  skipped_shows?: number;
+}
 export interface ValidateResult { ok: boolean; count?: number; error?: string; channels?: Channel[] }
+export interface PlexCollection { id: string; name: string; count: number; section: string; summary: string; has_poster: boolean }
+export interface CollectionSelection { name: string; channel_number: number; include: boolean }
 export interface LogEntry { name: string; size: number; modified: number }
 
 // ── SSE streaming ──────────────────────────────────────────────────────────────
@@ -79,10 +98,16 @@ export async function streamPipeline(
   endpoint: string,
   params: Record<string, string> = {},
   onEvent: (e: StreamEvent) => void,
+  body?: unknown,
 ): Promise<number> {
   const qs = new URLSearchParams(params).toString();
   const url = `${BASE}${endpoint}${qs ? `?${qs}` : ''}`;
-  const res = await fetch(url, { method: 'POST' });
+  const fetchOpts: RequestInit = { method: 'POST' };
+  if (body !== undefined) {
+    fetchOpts.body = JSON.stringify(body);
+    fetchOpts.headers = { 'Content-Type': 'application/json' };
+  }
+  const res = await fetch(url, fetchOpts);
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   if (!res.body) throw new Error('No body');
 
