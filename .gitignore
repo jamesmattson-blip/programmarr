@@ -1,13 +1,30 @@
+# User data (gitignored — lives in data/ volume or project root for CLI use)
 config.json
 config*.json
 channels.json
 channels*.json
 *.csv
 backup_*.json
+prompt_for_llm.md
+gemresults.json
+
+# Data directory contents (volume mount — keep the dir, ignore the files)
+data/*
+!data/.gitkeep
+
+# Python
 __pycache__/
 *.pyc
+*.pyo
+
+# Frontend build artifacts
+frontend/node_modules/
+backend/static/
+
+# Dev / scratch
 _archive/
 .claude/
 generate_ai.py
 PROMPT.personal.md
-prompt_for_llm.md
+screenshot_*.png
+*.log

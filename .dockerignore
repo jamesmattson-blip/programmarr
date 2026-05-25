@@ -1,0 +1,15 @@
+.git
+.claude
+__pycache__
+*.pyc
+*.pyo
+node_modules
+frontend/node_modules
+backend/static
+data/
+config.json
+channels.json
+plex_library.csv
+prompt_for_llm.md
+gemresults.json
+*.log

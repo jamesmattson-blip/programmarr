@@ -1,0 +1,13 @@
+services:
+  programmarr:
+    image: programmarr:latest   # use 'build: .' if building locally
+    build: .
+    container_name: programmarr
+    restart: unless-stopped
+    ports:
+      - "7979:7979"
+    volumes:
+      - ./data:/data
+    environment:
+      - PROGRAMMARR_DATA=/data
+      - PROGRAMMARR_SCRIPTS=/app

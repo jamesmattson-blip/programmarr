@@ -4,9 +4,20 @@ This file provides guidance to Claude Code when working with this repository.
 
 ## What This Is
 
-A Python 3 CLI pipeline that exports a Plex library, feeds it to an LLM for channel curation, and creates themed virtual TV channels in [Tunarr](https://github.com/chrisbenincasa/tunarr).
+A Python 3 pipeline that exports a Plex library, feeds it to an LLM for channel curation, and creates themed virtual TV channels in [Tunarr](https://github.com/chrisbenincasa/tunarr).
 
-## Recommended Entry Point
+Available as a **Docker web app** (primary) or a **CLI tool** (power users / advanced).
+
+## Recommended Entry Point — Web UI (Docker)
+
+```bash
+docker compose up -d
+# then open http://<host-ip>:7979
+```
+
+First run shows an onboarding wizard: create login credentials → enter Tunarr/Plex/TMDB URLs → dashboard. Config is saved to `./data/config.json` (bind-mounted volume).
+
+## CLI Entry Point (power users)
 
 ```powershell
 python programmarr.py
@@ -14,8 +25,44 @@ python programmarr.py
 
 `programmarr.py` is the interactive CLI wrapper. It handles first-time config setup,
 walks through the full workflow for whichever path the user picks, always runs a probe
-before deploying, and offers Plex sync at the end. Most users should never need to run
-the individual scripts directly.
+before deploying, and offers Plex sync at the end.
+
+## Web UI Architecture
+
+**Stack:** FastAPI (Python) + React + Mantine v7 — served as a single Docker container on port 7979.
+
+**Directory layout:**
+```
+backend/          FastAPI app + routers
+  main.py         Entry point — auth middleware, SPA fallback, lifespan
+  routers/
+    config_router.py    GET/POST /api/config, /api/config/status
+    status_router.py    GET /api/status (Plex+Tunarr ping), /api/tunarr/channels
+    channels_router.py  CRUD /api/channels, /api/channels/{n}, /api/library/titles
+    pipeline_router.py  SSE-streaming pipeline endpoints (export, probe, deploy, etc.)
+    logs_router.py      GET /api/logs, /api/logs/{name}
+frontend/         React + Mantine SPA (built to backend/static/)
+  src/pages/
+    Onboarding.tsx  First-run wizard (shown when config.json missing/unconfigured)
+    Dashboard.tsx   Live Tunarr channel grid + connection status
+    Run.tsx         Pipeline stepper — AI / No-AI / Collections tabs
+    Channels.tsx    channels.json editor (Tier 2: click-to-edit)
+    Settings.tsx    config.json editor (masked sensitive fields)
+    Logs.tsx        Per-run log viewer
+data/             Bind-mounted volume — config.json, channels.json, plex_library.csv, logs/
+```
+
+**Environment variables (Docker):**
+- `PROGRAMMARR_DATA` — path where data files live (default: `/data`)
+- `PROGRAMMARR_SCRIPTS` — path where Python scripts live (default: `/app`)
+
+**Key design decisions:**
+- Pipeline scripts (`export.py`, `create.py`, etc.) run as subprocesses with `cwd=DATA_DIR` so their relative file opens work correctly without modification
+- SSE (Server-Sent Events) streams subprocess stdout line-by-line to the browser inline terminal
+- Auth middleware reads `config.json` on every request — no restart needed to enable/disable auth
+- Onboarding shown automatically when `config_status.configured` is false (no Tunarr/Plex/token set)
+- Channels page reads from `channels.json` (local file), Dashboard reads live from Tunarr API
+- **Deferred (Tier 3):** drag-to-reorder channels, autocomplete from plex_library.csv, inline Plex validation
 
 ## Workflow
 
@@ -56,18 +103,21 @@ python create.py            # apply
 
 ## Configuration
 
-All config lives in `config.json` (gitignored — never hardcode credentials):
+All config lives in `config.json` (gitignored — lives in `data/` for Docker, project root for CLI):
 
 ```json
 {
-    "tunarr_url": "http://your-tunarr:8000",
-    "plex_url":   "http://your-plex:32400",
-    "plex_token": "your-token",
-    "tmdb_api_key": "your-tmdb-key"
+    "tunarr_url":     "http://your-tunarr:8000",
+    "plex_url":       "http://your-plex:32400",
+    "plex_token":     "your-token",
+    "tmdb_api_key":   "your-tmdb-key",
+    "auth_username":  "admin",
+    "auth_password":  "yourpassword"
 }
 ```
 
-`tmdb_api_key` is optional — only required for `fetch_images.py`. Get a free key at https://www.themoviedb.org/settings/api
+- `tmdb_api_key` — optional, only for `fetch_images.py`. Free key at https://www.themoviedb.org/settings/api
+- `auth_username` / `auth_password` — optional HTTP Basic Auth. Set via onboarding wizard or Settings page. When set, every request to the FastAPI backend requires these credentials. Leave both blank to disable auth.
 
 See `config.json.example` for the template.
 
