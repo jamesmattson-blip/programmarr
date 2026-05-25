@@ -1,4 +1,5 @@
 import { AppShell, Box, Divider, Group, NavLink, Text } from '@mantine/core';
+import { version } from '../../package.json';
 import {
   IconBroadcast,
   IconFileText,
@@ -49,7 +50,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         ))}
 
         <Box mt="auto" px="sm" pb="sm">
-          <Text size="xs" c="dimmed">v0.1.0</Text>
+          <Text size="xs" c="dimmed">v{version}</Text>
         </Box>
       </AppShell.Navbar>
 
