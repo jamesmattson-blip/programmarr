@@ -265,7 +265,7 @@ A title can appear on multiple channels — this is intentional and expected.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/api/pipeline/export` | SSE-stream `export.py` |
+| POST | `/api/pipeline/export` | SSE-stream `export.py`; optional JSON body `{"no_crossref": true}` passes `--no-crossref` to skip Tunarr title matching |
 | GET | `/api/pipeline/csv` | Download `plex_library.csv` |
 | GET | `/api/pipeline/csv/info` | Stats: rows, movies, tv_shows, skipped counts, preview lines |
 | GET | `/api/pipeline/prompt` | Fetch `PROMPT.md` with `{TARGET}` and preferences injected |

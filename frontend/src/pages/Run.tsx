@@ -68,13 +68,14 @@ function ExportStep({ onDone }: { onDone: () => void }) {
   const [done, setDone] = useState(false);
   const [success, setSuccess] = useState(false);
   const [summary, setSummary] = useState<Awaited<ReturnType<typeof api.getCsvInfo>> | null>(null);
+  const [noCrossref, setNoCrossref] = useState(false);
 
   async function run() {
     setLines([]); setDone(false); setSummary(null); setRunning(true);
     try {
       const code = await streamPipeline('/pipeline/export', {}, (ev: StreamEvent) => {
         if (ev.type === 'line') setLines(l => [...l, ev.text]);
-      });
+      }, noCrossref ? { no_crossref: true } : undefined);
       const ok = code === 0;
       setSuccess(ok); setDone(true);
       if (ok) setSummary(await api.getCsvInfo());
@@ -90,12 +91,24 @@ function ExportStep({ onDone }: { onDone: () => void }) {
 
   return (
     <Stack gap="md">
-      <Group>
+      <Group align="center">
         <Button leftSection={<IconPlayerPlay size={15} />} color="orange" onClick={run} loading={running}>
           {running ? 'Exporting…' : done ? 'Re-run Export' : 'Run Export'}
         </Button>
         {done && !success && <Button variant="subtle" color="red" onClick={run}>Retry</Button>}
+        <Checkbox
+          label="Skip Tunarr cross-reference"
+          checked={noCrossref}
+          onChange={(e) => setNoCrossref(e.currentTarget.checked)}
+          disabled={running}
+          size="sm"
+        />
       </Group>
+      {noCrossref && !running && (
+        <Text size="xs" c="yellow.5">
+          All Plex content will be exported regardless of what Tunarr has indexed. Use this if Tunarr shows your library but export is skipping everything.
+        </Text>
+      )}
 
       {done && success && summary && (
         <Card withBorder p="sm" bg="dark.8">

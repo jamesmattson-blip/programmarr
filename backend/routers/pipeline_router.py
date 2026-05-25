@@ -91,9 +91,13 @@ def _sse(gen: AsyncGenerator[str, None]) -> StreamingResponse:
     )
 
 
+class ExportOptions(BaseModel):
+    no_crossref: bool = False
+
 @router.post("/pipeline/export")
-async def run_export():
-    return _sse(_stream("export.py", [], "export"))
+async def run_export(opts: ExportOptions = ExportOptions()):
+    args = ["--no-crossref"] if opts.no_crossref else []
+    return _sse(_stream("export.py", args, "export"))
 
 
 @router.get("/pipeline/csv")
