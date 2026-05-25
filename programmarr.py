@@ -21,9 +21,22 @@ def run(cmd):
     return subprocess.run([sys.executable] + cmd, cwd=SCRIPT_DIR)
 
 
+LOGO = BOLD + CYAN + r"""
+______
+| ___ \
+| |_/ / __ ___   __ _ _ __ __ _ _ __ ___  _ __ ___   __ _ _ __ _ __
+|  __/ '__/ _ \ / _` | '__/ _` | '_ ` _ \| '_ ` _ \ / _` | '__| '__|
+| |  | | | (_) | (_| | | | (_| | | | | | | | | | | | (_| | |  | |
+\_|  |_|  \___/ \__, |_|  \__,_|_| |_| |_|_| |_| |_|\__,_|_|  |_|
+                 __/ |
+                |___/
+""" + RESET
+
+
 def header(title):
+    print(LOGO)
     bar = "-" * 52
-    print(f"\n{BOLD}{CYAN}{bar}{RESET}")
+    print(f"{BOLD}{CYAN}{bar}{RESET}")
     print(f"{BOLD}{CYAN}  {title}{RESET}")
     print(f"{BOLD}{CYAN}{bar}{RESET}\n")
 
@@ -286,7 +299,7 @@ def utilities_menu():
 
 def main_menu():
     while True:
-        header("Programmarr")
+        header("Main Menu")
         print("  1) AI path         - export -> paste into LLM -> deploy")
         print("  2) No-AI path      - auto-generate from metadata -> deploy")
         print("  3) Collections     - sync Plex collections -> deploy")
