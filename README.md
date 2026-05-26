@@ -101,6 +101,40 @@ Replace `/mnt/YourPool/AppData/programmarr/data` with a real path on your pool.
 
 ---
 
+## Screenshots
+
+<div align="center">
+  <img src="docs/dashboard.png" alt="Dashboard showing 81 live channels with Tunarr and Plex online" width="100%" />
+  <p><em>Dashboard — live view of all 81 channels with Tunarr and Plex connection status</em></p>
+</div>
+
+<br />
+
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="docs/onboarding.png" alt="First-run onboarding wizard" width="100%" />
+      <p align="center"><em>First-run setup wizard — credentials and connections in two steps</em></p>
+    </td>
+    <td width="50%" valign="top">
+      <img src="docs/run.png" alt="Run Pipeline stepper with AI, No-AI, and Collections tabs" width="100%" />
+      <p align="center"><em>Run Pipeline — choose AI, No-AI, or Collections path; live terminal output streams to the browser</em></p>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="docs/channels.png" alt="Channels editor listing all channels with shuffle mode and item count" width="100%" />
+      <p align="center"><em>Channel editor — view, edit, and delete channels directly in the browser</em></p>
+    </td>
+    <td width="50%" valign="top">
+      <img src="docs/settings.png" alt="Settings page with Tunarr URL, Plex URL, TMDB key, and auth fields" width="100%" />
+      <p align="center"><em>Settings — all connection config and optional auth in one place</em></p>
+    </td>
+  </tr>
+</table>
+
+---
+
 ## What it does
 
 | Path | How it works |
