@@ -1,13 +1,13 @@
 import {
-  Alert, Anchor, Box, Button, Card, Center, Checkbox, Divider, Group,
-  Image, Loader, NumberInput, ScrollArea, SimpleGrid, Stack, Stepper,
-  Tabs, Text, Textarea, ThemeIcon, Title,
+  Alert, Anchor, Badge, Box, Button, Card, Center, Checkbox, Divider, Group,
+  Image, Loader, NumberInput, ScrollArea, SimpleGrid, Stack,
+  Stepper, Tabs, Text, Textarea, ThemeIcon, Title,
 } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { Dropzone } from '@mantine/dropzone';
 import {
   IconAlertCircle, IconArrowRight, IconCheck, IconCopy, IconDownload,
-  IconExternalLink, IconPlayerPlay, IconUpload, IconX,
+  IconExternalLink, IconLock, IconPlayerPlay, IconUpload, IconX,
 } from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
 import { api, streamPipeline, StreamEvent, PlexCollection, PlexLibrary, CollectionSelection } from '../api/client';
@@ -221,11 +221,13 @@ function GenerateStep({ onDone }: { onDone: () => void }) {
   const [done, setDone] = useState(false);
   const [success, setSuccess] = useState(false);
   const [channelCount, setChannelCount] = useState<number | null>(null);
+  const [start, setStart] = useState<number | string>(1);
 
   async function run() {
     setLines([]); setDone(false); setChannelCount(null); setRunning(true);
+    const startNum = typeof start === 'number' ? start : parseInt(String(start)) || 10;
     try {
-      const code = await streamPipeline('/pipeline/no-ai', {}, (ev: StreamEvent) => {
+      const code = await streamPipeline('/pipeline/no-ai', startNum !== 10 ? { start: String(startNum) } : {}, (ev: StreamEvent) => {
         if (ev.type === 'line') setLines(l => [...l, ev.text]);
       });
       const ok = code === 0;
@@ -246,6 +248,19 @@ function GenerateStep({ onDone }: { onDone: () => void }) {
 
   return (
     <Stack gap="md">
+      <Card withBorder p="md">
+        <Text fw={700} mb="sm">Configure generation</Text>
+        <Group align="flex-end" gap="md">
+          <NumberInput
+            label="Channels start at"
+            w={100}
+            value={start}
+            onChange={setStart}
+            min={1} max={500} step={1} size="sm"
+          />
+          <Text size="sm" c="dimmed" mb={6}>offsets all block ranges (e.g. set to 20 to leave 10–19 free)</Text>
+        </Group>
+      </Card>
       <Text size="sm" c="dimmed">
         Automatically generates decade channels, genre channels, and TV marathon channels from your library metadata.
       </Text>
@@ -269,13 +284,24 @@ function GenerateStep({ onDone }: { onDone: () => void }) {
   );
 }
 
-// ── Step: LLM Handoff ──────────────────────────────────────────────────────────
+// ── Step: Channel Planner (formerly LLM Handoff) ──────────────────────────────
 
-function LLMHandoff({ onAddCollections, onSkipToDeploy }: { onAddCollections: () => void; onSkipToDeploy: () => void }) {
+function LLMHandoff({
+  onAddCollections,
+  onSkipToDeploy,
+  onProtectedNumsChange,
+}: {
+  onAddCollections: () => void;
+  onSkipToDeploy: () => void;
+  onProtectedNumsChange: (nums: number[]) => void;
+}) {
   const [target, setTarget] = useState<number | string>(30);
+  const [start, setStart] = useState<number | string>(1);
   const [prefs, setPrefs] = useState('');
   const [prompt, setPrompt] = useState('');
   const [csvInfo, setCsvInfo] = useState<any>(null);
+  const [tunarrChannels, setTunarrChannels] = useState<{ number: number; name: string }[]>([]);
+  const [checkedNums, setCheckedNums] = useState<Set<number>>(new Set());
   const [pasteText, setPasteText] = useState('');
   const [validating, setValidating] = useState(false);
   const [result, setResult] = useState<{ ok: boolean; count?: number; error?: string; channels?: Channel[] } | null>(null);
@@ -285,12 +311,56 @@ function LLMHandoff({ onAddCollections, onSkipToDeploy }: { onAddCollections: ()
 
   useEffect(() => {
     api.getCsvInfo().then(setCsvInfo);
-    loadPrompt();
+    api.getTunarrChannels().then(chs => {
+      const sorted = [...chs].sort((a, b) => a.number - b.number);
+      setTunarrChannels(sorted);
+      if (sorted.length > 0) {
+        const allNums = sorted.map(c => c.number);
+        const checked = new Set(allNums);
+        setCheckedNums(checked);
+        onProtectedNumsChange(allNums);
+        const highest = Math.max(...allNums);
+        const autoStart = Math.ceil((highest + 1) / 10) * 10;
+        setStart(autoStart);
+        loadPrompt(autoStart);
+        return;
+      }
+      loadPrompt();
+    }).catch(() => loadPrompt());
   }, []);
 
-  async function loadPrompt() {
+  function calcStart(checked: Set<number>): number {
+    if (checked.size === 0) return 1;
+    const highest = Math.max(...checked);
+    return Math.ceil((highest + 1) / 10) * 10;
+  }
+
+  function toggleChannel(num: number, checked: boolean) {
+    const next = new Set(checkedNums);
+    if (checked) next.add(num); else next.delete(num);
+    setCheckedNums(next);
+    onProtectedNumsChange([...next]);
+    setStart(calcStart(next));
+  }
+
+  function selectAll() {
+    const allNums = tunarrChannels.map(c => c.number);
+    const next = new Set(allNums);
+    setCheckedNums(next);
+    onProtectedNumsChange(allNums);
+    setStart(calcStart(next));
+  }
+
+  function deselectAll() {
+    setCheckedNums(new Set());
+    onProtectedNumsChange([]);
+    setStart(1);
+  }
+
+  async function loadPrompt(startOverride?: number) {
+    const startVal = startOverride ?? (typeof start === 'number' ? start : parseInt(String(start)) || 1);
     try {
-      const p = await api.getPrompt(String(target), prefs);
+      const p = await api.getPrompt(String(target), prefs, startVal);
       setPrompt(p.content);
     } catch { /* ignore */ }
   }
@@ -317,8 +387,59 @@ function LLMHandoff({ onAddCollections, onSkipToDeploy }: { onAddCollections: ()
 
   const breakdown = result?.ok && result.channels ? getChannelBreakdown(result.channels) : null;
 
+  const checkedCount = checkedNums.size;
+
   return (
     <Stack gap="lg">
+      {/* Current lineup with protection checkboxes */}
+      <Card withBorder p="md">
+        <Group justify="space-between" mb="sm">
+          <Text fw={700}>Current Tunarr Lineup</Text>
+          {tunarrChannels.length > 0 && (
+            <Group gap={4}>
+              <Button size="xs" variant="subtle" py={2} onClick={selectAll}>All</Button>
+              <Button size="xs" variant="subtle" py={2} onClick={deselectAll}>None</Button>
+            </Group>
+          )}
+        </Group>
+        {tunarrChannels.length === 0 ? (
+          <Text size="sm" c="dimmed">No channels in Tunarr yet — starting fresh.</Text>
+        ) : (
+          <>
+            <ScrollArea h={200} style={{ borderRadius: 4, border: '1px solid var(--mantine-color-dark-5)' }}>
+              <Stack gap={0}>
+                {tunarrChannels.map(c => (
+                  <Group
+                    key={c.number} gap="xs" px="sm" py={5}
+                    style={{
+                      borderBottom: '1px solid var(--mantine-color-dark-6)',
+                      opacity: checkedNums.has(c.number) ? 1 : 0.4,
+                      transition: 'opacity 0.1s',
+                    }}
+                  >
+                    <Checkbox
+                      size="xs"
+                      checked={checkedNums.has(c.number)}
+                      onChange={(e) => toggleChannel(c.number, e.currentTarget.checked)}
+                      style={{ flexShrink: 0 }}
+                    />
+                    <Text size="xs" c="dimmed" w={36} style={{ flexShrink: 0 }}>#{c.number}</Text>
+                    <Text size="xs" lineClamp={1}>{c.name}</Text>
+                  </Group>
+                ))}
+              </Stack>
+            </ScrollArea>
+            <Text size="xs" c={checkedCount < tunarrChannels.length ? 'yellow.5' : 'dimmed'} mt="xs">
+              {checkedCount === tunarrChannels.length
+                ? `All ${checkedCount} channels will be kept. New channels will be added alongside them.`
+                : checkedCount === 0
+                  ? 'All existing channels will be cleared — entirely new stations will be created from scratch.'
+                  : `${checkedCount} channels kept. ${tunarrChannels.length - checkedCount} will be permanently cleared and rebuilt as new stations.`}
+            </Text>
+          </>
+        )}
+      </Card>
+
       {/* Config card */}
       <Card withBorder p="md">
         <Text fw={700} mb="sm">Configure your request</Text>
@@ -329,17 +450,25 @@ function LLMHandoff({ onAddCollections, onSkipToDeploy }: { onAddCollections: ()
               w={100}
               value={target}
               onChange={setTarget}
-              onBlur={loadPrompt}
+              onBlur={() => loadPrompt()}
               min={1} max={500} step={1} size="sm"
             />
-            <Text size="sm" c="dimmed" mb={6}>channels — the LLM will aim for this number</Text>
+            <NumberInput
+              label="Channels start at"
+              w={100}
+              value={start}
+              onChange={setStart}
+              onBlur={() => loadPrompt()}
+              min={1} max={500} step={1} size="sm"
+            />
+            <Text size="sm" c="dimmed" mb={6}>offsets all block ranges (e.g. set to 30 to leave 1–29 free)</Text>
           </Group>
           <Textarea
             label="Theme preferences (optional)"
             placeholder="e.g. Batman, 90s cartoons, Documentaries, Classic westerns, Horror films…"
             value={prefs}
             onChange={(e) => setPrefs(e.currentTarget.value)}
-            onBlur={loadPrompt}
+            onBlur={() => loadPrompt()}
             maxLength={PREFS_MAX}
             minRows={3}
             autosize
@@ -655,12 +784,15 @@ function parseProbeChannels(lines: string[]): ChannelSel[] {
 
 // ── Step: Deploy ───────────────────────────────────────────────────────────────
 
-function DeployStep({ onDone, onSkipToSync }: { onDone: () => void; onSkipToSync: () => void }) {
+type ProtectedChannel = { number: number; name: string; protect: boolean };
+
+function DeployStep({ onDone, onSkipToSync, inheritedProtectedNums }: { onDone: () => void; onSkipToSync: () => void; inheritedProtectedNums?: number[] }) {
   const [probeLines, setProbeLines] = useState<string[]>([]);
   const [probeDone, setProbeDone] = useState(false);
   const [probeOk, setProbeOk] = useState(false);
   const [probing, setProbing] = useState(false);
   const [channelSels, setChannelSels] = useState<ChannelSel[]>([]);
+  const [protectedChs, setProtectedChs] = useState<ProtectedChannel[]>([]);
 
   const [deployLines, setDeployLines] = useState<string[]>([]);
   const [deployDone, setDeployDone] = useState(false);
@@ -673,12 +805,23 @@ function DeployStep({ onDone, onSkipToSync }: { onDone: () => void; onSkipToSync
 
   useEffect(() => {
     if (probeDone && probeOk) {
-      setChannelSels(parseProbeChannels(probeLines));
+      const parsed = parseProbeChannels(probeLines);
+      setChannelSels(parsed);
+      if (inheritedProtectedNums === undefined) {
+        const deployNums = new Set(parsed.map(c => c.number));
+        api.getTunarrChannels().then(tunarrChs => {
+          setProtectedChs(tunarrChs.map(c => ({
+            number: c.number,
+            name: c.name,
+            protect: !deployNums.has(c.number),
+          })));
+        }).catch(() => {});
+      }
     }
   }, [probeDone, probeOk]);
 
   async function runProbe() {
-    setProbeLines([]); setProbeDone(false); setChannelSels([]); setProbing(true);
+    setProbeLines([]); setProbeDone(false); setChannelSels([]); setProtectedChs([]); setProbing(true);
     const code = await streamPipeline('/pipeline/probe', {}, (ev: StreamEvent) => {
       if (ev.type === 'line') setProbeLines(l => [...l, ev.text]);
     });
@@ -688,16 +831,24 @@ function DeployStep({ onDone, onSkipToSync }: { onDone: () => void; onSkipToSync
   async function runDeploy() {
     setDeployLines([]); setDeployDone(false); setDeploying(true);
     const ev = (e: StreamEvent) => { if (e.type === 'line') setDeployLines(l => [...l, e.text]); };
+    const protectedNums = inheritedProtectedNums ?? protectedChs.filter(p => p.protect).map(p => p.number);
+
     let code: number;
     if (channelSels.length > 0) {
-      const body = channelSels.map(s => ({
-        original_number: s.number,
-        deploy_number: s.deployNumber,
-        include: s.include,
-      }));
+      const body = {
+        selections: channelSels.map(s => ({
+          original_number: s.number,
+          deploy_number: s.deployNumber,
+          include: s.include,
+        })),
+        protected_numbers: protectedNums,
+        no_delete: false,
+      };
       code = await streamPipeline('/pipeline/deploy-selective', {}, ev, body);
     } else {
-      code = await streamPipeline('/pipeline/deploy', {}, ev);
+      const params: Record<string, string> = {};
+      if (protectedNums.length > 0) params.protected = protectedNums.join(',');
+      code = await streamPipeline('/pipeline/deploy', params, ev);
     }
     setDeployOk(code === 0); setDeployDone(true); setDeploying(false);
   }
@@ -706,10 +857,21 @@ function DeployStep({ onDone, onSkipToSync }: { onDone: () => void; onSkipToSync
     setChannelSels(prev => prev.map((s, i) => i === idx ? { ...s, ...patch } : s));
   }
 
+  function updateProtected(idx: number, protect: boolean) {
+    setProtectedChs(prev => prev.map((p, i) => i === idx ? { ...p, protect } : p));
+  }
+
   const deployStats = parseRunStats(deployLines);
   const includedCount = channelSels.filter(s => s.include).length;
   const tunarrUrl = config.tunarr_url || '';
   const plexLiveTvUrl = config.plex_url ? `${config.plex_url.replace(/\/$/, '')}/web/index.html#!/settings/livetv` : '';
+
+  const effectiveProtectedNums = new Set(
+    inheritedProtectedNums ?? protectedChs.filter(p => p.protect).map(p => p.number)
+  );
+  const activeDeployNums = new Set(channelSels.filter(s => s.include).map(s => s.deployNumber));
+  const conflictNums = new Set([...effectiveProtectedNums].filter(n => activeDeployNums.has(n)));
+  const conflictCount = conflictNums.size;
 
   return (
     <Stack gap="lg">
@@ -720,6 +882,13 @@ function DeployStep({ onDone, onSkipToSync }: { onDone: () => void; onSkipToSync
           Before anything touches Tunarr, we verify every title in your channels.json exists in your library.
           You'll see exactly what gets created — no changes are made until you hit Deploy.
         </Text>
+
+        {inheritedProtectedNums !== undefined && inheritedProtectedNums.length > 0 && (
+          <Text size="xs" c="dimmed" mb="md">
+            <Text span fw={600} c="blue">{inheritedProtectedNums.length} channel{inheritedProtectedNums.length !== 1 ? 's' : ''}</Text> will be kept from your Channel Planner selection.
+          </Text>
+        )}
+
         <Group mb="sm">
           <Button
             color="gray" variant="light"
@@ -749,39 +918,46 @@ function DeployStep({ onDone, onSkipToSync }: { onDone: () => void; onSkipToSync
                 </Group>
                 <ScrollArea style={{ flex: 1 }}>
                   <Stack gap={0}>
-                    {channelSels.map((sel, idx) => (
-                      <Group
-                        key={sel.number}
-                        gap="xs"
-                        wrap="nowrap"
-                        py={5}
-                        px={4}
-                        style={{
-                          borderBottom: '1px solid var(--mantine-color-dark-6)',
-                          opacity: sel.include ? 1 : 0.4,
-                          transition: 'opacity 0.1s',
-                        }}
-                      >
-                        <Checkbox
-                          size="xs"
-                          checked={sel.include}
-                          onChange={(e) => updateChannelSel(idx, { include: e.currentTarget.checked })}
-                          style={{ flexShrink: 0 }}
-                        />
-                        <NumberInput
-                          value={sel.deployNumber}
-                          onChange={(v) => {
-                            const n = typeof v === 'number' ? v : parseInt(String(v));
-                            if (!isNaN(n)) updateChannelSel(idx, { deployNumber: n });
+                    {channelSels.map((sel, idx) => {
+                      const hasConflict = sel.include && effectiveProtectedNums.has(sel.deployNumber);
+                      return (
+                        <Group
+                          key={sel.number}
+                          gap="xs"
+                          wrap="nowrap"
+                          py={5}
+                          px={4}
+                          style={{
+                            borderBottom: '1px solid var(--mantine-color-dark-6)',
+                            opacity: sel.include ? 1 : 0.4,
+                            transition: 'opacity 0.1s',
+                            backgroundColor: hasConflict ? 'var(--mantine-color-red-9)' : undefined,
                           }}
-                          min={1} max={999} size="xs" w={58}
-                          disabled={!sel.include}
-                          styles={{ input: { textAlign: 'center', paddingInline: 4 } }}
-                        />
-                        <Text size="xs" style={{ flex: 1, minWidth: 0 }} lineClamp={1}>{sel.name}</Text>
-                        <Text size="xs" c="dimmed" style={{ flexShrink: 0, whiteSpace: 'nowrap' }}>{sel.summary}</Text>
-                      </Group>
-                    ))}
+                        >
+                          <Checkbox
+                            size="xs"
+                            checked={sel.include}
+                            onChange={(e) => updateChannelSel(idx, { include: e.currentTarget.checked })}
+                            style={{ flexShrink: 0 }}
+                          />
+                          <NumberInput
+                            value={sel.deployNumber}
+                            onChange={(v) => {
+                              const n = typeof v === 'number' ? v : parseInt(String(v));
+                              if (!isNaN(n)) updateChannelSel(idx, { deployNumber: n });
+                            }}
+                            min={1} max={999} size="xs" w={58}
+                            disabled={!sel.include}
+                            styles={{ input: { textAlign: 'center', paddingInline: 4 } }}
+                          />
+                          <Text size="xs" style={{ flex: 1, minWidth: 0 }} lineClamp={1}>{sel.name}</Text>
+                          {hasConflict
+                            ? <Badge size="xs" color="red" style={{ flexShrink: 0 }}>conflict</Badge>
+                            : <Text size="xs" c="dimmed" style={{ flexShrink: 0, whiteSpace: 'nowrap' }}>{sel.summary}</Text>
+                          }
+                        </Group>
+                      );
+                    })}
                   </Stack>
                 </ScrollArea>
               </Card>
@@ -789,6 +965,58 @@ function DeployStep({ onDone, onSkipToSync }: { onDone: () => void; onSkipToSync
           ) : (
             <TerminalOutput lines={probeLines} done={probeDone} success={probeOk} />
           )
+        )}
+
+        {probeDone && probeOk && inheritedProtectedNums === undefined && protectedChs.length > 0 && (
+          <Card withBorder p="sm" mt="md">
+            <Group justify="space-between" mb="xs">
+              <Group gap="xs">
+                <ThemeIcon color="blue" variant="light" size="sm" radius="xl">
+                  <IconLock size={12} />
+                </ThemeIcon>
+                <Text size="sm" fw={600}>Protect existing Tunarr channels</Text>
+              </Group>
+              <Group gap={4}>
+                <Button size="xs" variant="subtle" py={2} onClick={() => setProtectedChs(s => s.map(x => ({ ...x, protect: true })))}>All</Button>
+                <Button size="xs" variant="subtle" py={2} onClick={() => setProtectedChs(s => s.map(x => ({ ...x, protect: false })))}>None</Button>
+              </Group>
+            </Group>
+            <Text size="xs" c="dimmed" mb="xs">
+              These channels exist in Tunarr but aren't in this deploy. Checked channels will not be deleted.
+            </Text>
+            <ScrollArea mah={200}>
+              <Stack gap={0}>
+                {protectedChs.map((p, idx) => {
+                  const hasConflict = p.protect && activeDeployNums.has(p.number);
+                  return (
+                    <Group
+                      key={p.number}
+                      gap="xs"
+                      wrap="nowrap"
+                      py={4}
+                      px={4}
+                      style={{
+                        borderBottom: '1px solid var(--mantine-color-dark-6)',
+                        opacity: p.protect ? 1 : 0.4,
+                        transition: 'opacity 0.1s',
+                        backgroundColor: hasConflict ? 'var(--mantine-color-red-9)' : undefined,
+                      }}
+                    >
+                      <Checkbox
+                        size="xs"
+                        checked={p.protect}
+                        onChange={(e) => updateProtected(idx, e.currentTarget.checked)}
+                        style={{ flexShrink: 0 }}
+                      />
+                      <Text size="xs" c="dimmed" w={36} style={{ flexShrink: 0 }}>#{p.number}</Text>
+                      <Text size="xs" style={{ flex: 1, minWidth: 0 }} lineClamp={1}>{p.name}</Text>
+                      {hasConflict && <Badge size="xs" color="red" style={{ flexShrink: 0 }}>conflict</Badge>}
+                    </Group>
+                  );
+                })}
+              </Stack>
+            </ScrollArea>
+          </Card>
         )}
 
         {probeDone && !probeOk && (
@@ -804,7 +1032,7 @@ function DeployStep({ onDone, onSkipToSync }: { onDone: () => void; onSkipToSync
       <Card withBorder p="lg">
         <Text fw={700} size="lg" mb="xs">Step 2 — Deploy</Text>
         <Text size="sm" c="dimmed" mb="md">
-          Replaces your existing Tunarr channels with the new lineup. This is the real thing — it writes to Tunarr now.
+          Deploys your channel lineup to Tunarr. Protected channels are preserved; all others will be replaced. This is the real thing — it writes to Tunarr now.
         </Text>
 
         {!probeDone && (
@@ -819,6 +1047,12 @@ function DeployStep({ onDone, onSkipToSync }: { onDone: () => void; onSkipToSync
           </Alert>
         )}
 
+        {probeDone && probeOk && conflictCount > 0 && (
+          <Alert color="red" variant="light" icon={<IconAlertCircle size={16} />} mb="sm">
+            {conflictCount} number conflict{conflictCount !== 1 ? 's' : ''} — renumber the highlighted deploy channels or uncheck protection to continue.
+          </Alert>
+        )}
+
         {probeDone && probeOk && (
           <Group mb="sm">
             <Button
@@ -826,7 +1060,7 @@ function DeployStep({ onDone, onSkipToSync }: { onDone: () => void; onSkipToSync
               leftSection={<IconPlayerPlay size={15} />}
               onClick={runDeploy}
               loading={deploying}
-              disabled={deployDone && deployOk || includedCount === 0}
+              disabled={deployDone && deployOk || includedCount === 0 || conflictCount > 0}
             >
               {deploying ? 'Deploying…'
                 : deployDone && deployOk ? 'Deployed'
@@ -948,6 +1182,7 @@ function SkippableStep({
 
 function AIPath() {
   const [step, setStep] = useState(0);
+  const [protectedNums, setProtectedNums] = useState<number[]>([]);
 
   return (
     <Stepper active={step} onStepClick={(s) => { if (s < step) setStep(s); }} color="orange" mt="md">
@@ -955,9 +1190,13 @@ function AIPath() {
         <Box mt="lg"><ExportStep onDone={() => setStep(1)} /></Box>
       </Stepper.Step>
 
-      <Stepper.Step label="LLM Handoff" description="Copy prompt, paste result">
+      <Stepper.Step label="Channel Planner" description="Review lineup & configure">
         <Box mt="lg">
-          <LLMHandoff onAddCollections={() => setStep(2)} onSkipToDeploy={() => setStep(3)} />
+          <LLMHandoff
+            onAddCollections={() => setStep(2)}
+            onSkipToDeploy={() => setStep(3)}
+            onProtectedNumsChange={setProtectedNums}
+          />
         </Box>
       </Stepper.Step>
 
@@ -967,7 +1206,7 @@ function AIPath() {
 
       <Stepper.Step label="Deploy" description="Probe & push to Tunarr">
         <Box mt="lg">
-          <DeployStep onDone={() => setStep(4)} onSkipToSync={() => setStep(5)} />
+          <DeployStep onDone={() => setStep(4)} onSkipToSync={() => setStep(5)} inheritedProtectedNums={protectedNums} />
         </Box>
       </Stepper.Step>
 

@@ -30,10 +30,11 @@ export const api = {
   getLibraryTitles: () => req<string[]>('/library/titles'),
 
   getCsvInfo: () => req<CsvInfo>('/pipeline/csv/info'),
-  getPrompt: (target?: string, prefs?: string) => {
+  getPrompt: (target?: string, prefs?: string, start?: number) => {
     const p = new URLSearchParams();
     if (target) p.set('target', target);
     if (prefs) p.set('preferences', prefs);
+    if (start !== undefined && start !== 10) p.set('start', String(start));
     return req<{ content: string }>(`/pipeline/prompt?${p}`);
   },
   validateText: async (content: string) => {

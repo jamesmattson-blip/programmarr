@@ -147,6 +147,8 @@ All three paths end with a probe (dry run) → deploy to Tunarr. The app streams
 
 ### Also included
 
+- **Channel protection** — before deploying, choose which existing Tunarr channels to keep. Checked = preserved; unchecked = cleared and rebuilt as new stations. The "Channels start at" number auto-adjusts to leave room for whatever you keep.
+- **Channel offset** — set a starting channel number so new channels don't collide with ones you want to keep. Auto-calculated from your highest protected channel, rounded to the nearest 10.
 - **Library picker** — choose which Plex libraries to scan (Movies, 4K Movies, Kids TV, etc.) before each export; supports mixing multiple libraries of the same type
 - **Channel logo fetching** — pulls TMDB clearlogos for single-show/movie channels
 - **Plex DVR sync** — maps new channels into the Plex Live TV guide automatically

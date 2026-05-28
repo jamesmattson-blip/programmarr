@@ -75,19 +75,25 @@ def main():
     parser = argparse.ArgumentParser(description="Generate starter channels.json without AI")
     parser.add_argument("--csv", default=DEFAULT_CSV, help="Input CSV from export.py")
     parser.add_argument("--out", default=DEFAULT_OUT, help="Output JSON path")
+    parser.add_argument("--start", type=int, default=10, metavar="N",
+                        help="Starting channel number — offsets all block ranges by N-10 (default: 10)")
     args = parser.parse_args()
+
+    offset = args.start - 10
 
     rows = load_csv(args.csv)
     movies = [r for r in rows if r["Type"] == "Movie"]
     shows = [r for r in rows if r["Type"] == "TV"]
 
     print(f"Loaded {len(movies)} movies, {len(shows)} TV shows from {args.csv}")
+    if offset:
+        print(f"Channel offset: +{offset} (all blocks shifted, starting at {args.start})")
 
     channels = []
 
     # ── TV Marathons (10s): shows with 50+ episodes ────────────────────────────
     print("\nBuilding TV Marathon channels (50+ episodes)...")
-    ch_num = TV_MARATHON_START
+    ch_num = TV_MARATHON_START + offset
     marathon_shows = sorted(
         [s for s in shows if parse_year(s.get("Episodes")) and int(s["Episodes"]) >= 50],
         key=lambda s: -int(s["Episodes"])
@@ -102,17 +108,18 @@ def main():
         })
         print(f"  #{ch_num} {show['Title']} 24/7 ({show['Episodes']} eps)")
         ch_num += 1
-        if ch_num > 19:
-            print("  (10s block full — remaining marathon candidates skipped)")
+        if ch_num > 19 + offset:
+            print(f"  ({args.start}s block full — remaining marathon candidates skipped)")
             break
 
     # ── Decade channels (30s) ──────────────────────────────────────────────────
     print("\nBuilding decade channels...")
     decades_used = set()
-    for name, ch_num, start, end in DECADE_RANGES:
+    for name, base_num, yr_start, yr_end in DECADE_RANGES:
+        ch_num = base_num + offset
         titles = [
             r["Title"] for r in movies
-            if parse_year(r["Year"]) and start <= parse_year(r["Year"]) <= end
+            if parse_year(r["Year"]) and yr_start <= parse_year(r["Year"]) <= yr_end
         ]
         if not titles:
             continue
@@ -127,13 +134,13 @@ def main():
 
     # ── Genre channels (36+) ───────────────────────────────────────────────────
     print("\nBuilding genre channels...")
-    next_num = 36
+    next_num = 36 + offset
     for name, suggested_num, genre_tag in GENRE_CHANNELS:
         # Don't collide with decade channels
         while next_num in decades_used or any(c["number"] == next_num for c in channels):
             next_num += 1
-        if next_num > 49:
-            print("  (30s block full — remaining genre channels skipped)")
+        if next_num > 49 + offset:
+            print("  (movies block full — remaining genre channels skipped)")
             break
 
         genre_lower = genre_tag.lower()
@@ -157,11 +164,11 @@ def main():
     # ── Franchise placeholders (50s) ──────────────────────────────────────────
     print("\nAdding franchise placeholder channels (edit content manually)...")
     placeholders = [
-        (50, "Marvel MCU",                  "ordered",  []),
-        (51, "Star Wars",                   "ordered",  []),
-        (52, "Indiana Jones",               "ordered",  []),
-        (53, "James Bond",                  "ordered",  []),
-        (54, "The Matrix",                  "ordered",  []),
+        (50 + offset, "Marvel MCU",     "ordered", []),
+        (51 + offset, "Star Wars",      "ordered", []),
+        (52 + offset, "Indiana Jones",  "ordered", []),
+        (53 + offset, "James Bond",     "ordered", []),
+        (54 + offset, "The Matrix",     "ordered", []),
     ]
     for num, name, shuffle, content in placeholders:
         channels.append({
@@ -176,9 +183,9 @@ def main():
     # ── TV Block placeholders (20s) ────────────────────────────────────────────
     print("\nAdding TV block placeholder channels (edit content manually)...")
     tv_placeholders = [
-        (20, "TGIF",                     "block",   []),
-        (21, "Saturday Morning Cartoons", "block",  []),
-        (22, "Animated TV Block",         "block",  []),
+        (20 + offset, "TGIF",                      "block", []),
+        (21 + offset, "Saturday Morning Cartoons",  "block", []),
+        (22 + offset, "Animated TV Block",          "block", []),
     ]
     for num, name, shuffle, content in tv_placeholders:
         channels.append({
@@ -193,8 +200,8 @@ def main():
     # ── Specialty placeholders (70s) ──────────────────────────────────────────
     print("\nAdding specialty placeholder channels...")
     specialty = [
-        (70, "Hackers 24/7",      "ordered", ["Hackers"]),
-        (71, "Holiday Cheer",     "shuffle", []),
+        (70 + offset, "Hackers 24/7",  "ordered", ["Hackers"]),
+        (71 + offset, "Holiday Cheer", "shuffle", []),
     ]
     for num, name, shuffle, content in specialty:
         channels.append({

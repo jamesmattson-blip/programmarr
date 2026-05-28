@@ -166,6 +166,7 @@ See `config.json.example` for the template.
 - Auto-generates decade channels (year filtering) and genre channels (genre tag matching)
 - Auto-generates TV marathon channels for shows with 50+ episodes
 - Writes placeholder entries for franchise/themed channels (user fills manually)
+- `--start N` — offsets all block ranges by `N - 10` (default: 10). E.g. `--start 30` shifts TV Marathons to 30–39, TV Blocks to 40–49, etc., leaving lower numbers free for pre-existing channels. Passed automatically by the web UI.
 - Output: `channels.json`
 
 **`generate_from_collections.py`** (Option C — Plex collections as channels)
@@ -180,6 +181,7 @@ See `config.json.example` for the template.
 - Reads `channels.json`
 - Indexes Tunarr library (exact title matching, case-insensitive)
 - Deletes all existing channels then creates new ones (use `--from N` to scope to channels >= N, preserving lower channels and their custom images)
+- `--protect N1,N2,...` — comma-separated channel numbers to skip during deletion; these channels remain in Tunarr untouched regardless of scope. Printed as "Preserving #N name (protected)" during the run.
 - Builds Tunarr random-schedule payloads (30-day rolling window — channels loop forever, no dead air)
 - Output: channels live in Tunarr
 
@@ -270,15 +272,15 @@ A title can appear on multiple channels — this is intentional and expected.
 | POST | `/api/pipeline/export` | SSE-stream `export.py`; JSON body `{"no_crossref": bool, "movie_sections": ["1","2"], "tv_sections": ["3"]}` — sections are Plex section keys; `null` = auto-detect, `[]` = skip that type |
 | GET | `/api/pipeline/csv` | Download `plex_library.csv` |
 | GET | `/api/pipeline/csv/info` | Stats: rows, movies, tv_shows, skipped counts, preview lines |
-| GET | `/api/pipeline/prompt` | Fetch `PROMPT.md` with `{TARGET}` and preferences injected |
+| GET | `/api/pipeline/prompt` | Fetch `PROMPT.md` with `{TARGET}`, preferences, and `start` (block offset) injected; query params: `target`, `preferences`, `start` |
 | POST | `/api/pipeline/validate` | Parse/validate LLM output (file upload or raw text), write `channels.json` |
-| POST | `/api/pipeline/no-ai` | SSE-stream `generate_no_ai.py` |
+| POST | `/api/pipeline/no-ai` | SSE-stream `generate_no_ai.py`; query param `start=N` passed as `--start N` |
 | GET | `/api/pipeline/collections` | Fetch all Plex collections (id, name, count, section, summary, has_poster) |
 | GET | `/api/pipeline/collections/{id}/poster` | Proxy Plex collection poster image |
 | POST | `/api/pipeline/collections/apply` | Write selected collections into `channels.json` |
 | POST | `/api/pipeline/probe` | SSE-stream `create.py --probe` |
-| POST | `/api/pipeline/deploy` | SSE-stream `create.py` (full deploy) |
-| POST | `/api/pipeline/deploy-selective` | Filter channels by `DeploySelection[]`, write `deploy_temp.json`, SSE-stream `create.py --json deploy_temp.json` |
+| POST | `/api/pipeline/deploy` | SSE-stream `create.py`; query params: `protected` (comma-separated channel numbers to preserve), `no_delete` (bool) |
+| POST | `/api/pipeline/deploy-selective` | JSON body `DeployRequest{selections, protected_numbers, no_delete}`; filters channels.json to selected entries, writes `deploy_temp.json`, SSE-streams `create.py --json deploy_temp.json [--protect N1,N2,...] [--no-delete]` |
 | POST | `/api/pipeline/images` | SSE-stream `fetch_images.py --apply` |
 | POST | `/api/pipeline/sync` | SSE-stream `sync_plex.py` |
 
@@ -293,15 +295,27 @@ A title can appear on multiple channels — this is intentional and expected.
 
 **AI Path (6 steps):**
 1. **Export** — fetches Plex library list on mount; shows "Libraries to scan" card with checkboxes grouped by Movies / TV Shows (all checked by default, supports multi-select across libraries of the same type); runs `export.py` with selected section keys; shows compact stats card on success; manual Continue
-2. **LLM Handoff** — config card (channel count NumberInput + theme Textarea); side-by-side prompt copy + CSV download; paste/upload LLM output; post-validate results card showing channel breakdown; "Add Plex Collections" or "Skip to Deploy" buttons
-3. **Add Plex Collections** — fetches collections on mount; 2-column grid with poster, name, count, editable channel number, checkbox (all checked by default); applies selections to `channels.json`
-4. **Deploy** — probe explainer card; runs probe; after probe completes: 2-column layout [terminal | scrollable channel review card with checkboxes + editable channel numbers]; selective deploy via `/pipeline/deploy-selective`
+2. **Channel Planner** — shows current Tunarr lineup as a scrollable checkable list (all checked by default = keep; uncheck = delete and replace with new station); auto-calculates "Channels start at" from the highest checked channel number, rounded up to the nearest 10 (e.g. highest checked is #24 → start at 30); summary line turns yellow and uses explicit "cleared / rebuilt" language when channels will be deleted; config card (target channel count NumberInput + "Channels start at" NumberInput + theme Textarea); side-by-side prompt copy + CSV download; paste/upload LLM output; post-validate results card showing channel breakdown; "Add Plex Collections" or "Skip to Deploy" buttons. Checked channel numbers are passed to Deploy step as `inheritedProtectedNums`.
+3. **Add Plex Collections** — fetches collections on mount; list with poster, name, count, editable channel number, checkbox (all checked by default); applies selections to `channels.json`
+4. **Deploy** — probe explainer card; shows note about how many channels will be kept (from Channel Planner); runs probe; after probe completes: 2-column layout [terminal | scrollable channel review card with checkboxes + editable channel numbers]; conflict detection highlights red when a deploy number collides with a protected number; selective deploy via `/pipeline/deploy-selective` with `protected_numbers` from Channel Planner
 5. **Fetch Images** — skippable step; runs `fetch_images.py --apply`
 6. **Sync Plex** — skippable step; runs `sync_plex.py`; post-deploy stats + links to Tunarr and Plex Live TV
 
-**No-AI Path (6 steps):** Same as AI but step 2 runs `generate_no_ai.py` instead of LLM handoff. Step 1 (Export) has the same library picker.
+**No-AI Path (6 steps):**
+1. **Export** — same as AI path
+2. **Generate** — "Channels start at" NumberInput (default 1); runs `generate_no_ai.py --start N`; shows channel count on success
+3. **Collections** — same as AI path
+4. **Deploy** — same as AI Deploy step but with its own protection panel (no inherited protection): shows all existing Tunarr channels after probe, with channels NOT being redeployed checked (protected) by default; user adjusts before deploying
+5. **Fetch Images** — same as AI path
+6. **Sync Plex** — same as AI path
 
-**Collections Path (4 steps):** Collections → Deploy → Fetch Images → Sync Plex (no export or LLM).
+**Collections Path (4 steps):** Collections → Deploy (with own protection panel) → Fetch Images → Sync Plex (no export or LLM).
+
+**Channel protection model:**
+- AI path: user decides which existing channels to keep in the **Channel Planner** step, before even generating the LLM prompt. Checked = protected (passed to deploy as `inheritedProtectedNums`). Deploy step shows a summary and skips the per-deploy panel.
+- No-AI / Collections path: user decides in the **Deploy** step's own protection panel after the probe. Channels not in the current deploy are protected by default; channels being redeployed are unprotected by default.
+- In both cases, protected channel numbers are passed to `create.py` via `--protect N1,N2,...`.
+- Conflict detection: if a protected number equals a deploy channel's `deployNumber`, the row highlights red and the deploy button is disabled until resolved (renumber or unprotect).
 
 **`deploy_temp.json`:** Written by `/pipeline/deploy-selective` when the user excludes channels from a deploy session. The original `channels.json` is not modified — only the channels the user chose are deployed.
 

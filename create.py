@@ -246,25 +246,31 @@ def build_schedule(shuffle_type, resolved_items):
 
 # ── Channel operations ─────────────────────────────────────────────────────────
 
-def delete_channels(tunarr_url, probe, from_ch=None):
+def delete_channels(tunarr_url, probe, from_ch=None, protect=None):
+    protect = protect or set()
     existing = api(tunarr_url, "GET", "/api/channels") or []
     if not existing:
         print("  No existing channels to delete")
         return
-    targets = [ch for ch in existing if from_ch is None or ch.get("number", 0) >= from_ch]
-    if not targets:
+    in_scope = [ch for ch in existing if from_ch is None or ch.get("number", 0) >= from_ch]
+    targets = [ch for ch in in_scope if ch.get("number", 0) not in protect]
+    preserved = [ch for ch in in_scope if ch.get("number", 0) in protect]
+    if not targets and not preserved:
         print(f"  No channels >= {from_ch} to delete")
         return
     scope = f">= #{from_ch}" if from_ch is not None else "all"
-    print(f"  Deleting {len(targets)} channels ({scope})...")
-    for ch in targets:
-        if probe:
-            print(f"    [PROBE] Would delete #{ch['number']} {ch['name']}")
-        else:
-            result = api(tunarr_url, "DELETE", f"/api/channels/{ch['id']}")
-            if result is not None:
-                print(f"    Deleted #{ch['number']} {ch['name']}")
-            time.sleep(0.1)
+    if targets:
+        print(f"  Deleting {len(targets)} channels ({scope})...")
+        for ch in targets:
+            if probe:
+                print(f"    [PROBE] Would delete #{ch['number']} {ch['name']}")
+            else:
+                result = api(tunarr_url, "DELETE", f"/api/channels/{ch['id']}")
+                if result is not None:
+                    print(f"    Deleted #{ch['number']} {ch['name']}")
+                time.sleep(0.1)
+    for ch in preserved:
+        print(f"    {'[PROBE] ' if probe else ''}Preserving #{ch['number']} {ch['name']} (protected)")
 
 
 def create_channel(tunarr_url, number, name, transcode_id):
@@ -321,6 +327,8 @@ def main():
     parser.add_argument("--no-delete", action="store_true", help="Skip deleting existing channels")
     parser.add_argument("--from", dest="from_ch", type=int, default=None, metavar="N",
                         help="Only operate on channels numbered N and above (preserves lower channels)")
+    parser.add_argument("--protect", dest="protect", default="", metavar="NUMS",
+                        help="Comma-separated channel numbers to protect from deletion")
     args = parser.parse_args()
 
     cfg = load_config()
@@ -374,9 +382,17 @@ def main():
         sys.exit(1)
 
     # ── Delete existing channels ───────────────────────────────────────────────
+    protect_set: set[int] = set()
+    if args.protect:
+        for n in args.protect.split(","):
+            try:
+                protect_set.add(int(n.strip()))
+            except ValueError:
+                pass
+
     if not args.no_delete:
         print("\nDeleting existing channels...")
-        delete_channels(tunarr_url, args.probe, from_ch=args.from_ch)
+        delete_channels(tunarr_url, args.probe, from_ch=args.from_ch, protect=protect_set)
 
     # ── Create channels ────────────────────────────────────────────────────────
     print(f"\n{'[PROBE] ' if args.probe else ''}Creating {len(channels)} channels...")

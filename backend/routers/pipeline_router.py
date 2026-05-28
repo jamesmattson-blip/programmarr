@@ -182,7 +182,7 @@ def csv_info():
 
 
 @router.get("/pipeline/prompt")
-def get_prompt(target: str = "", preferences: str = ""):
+def get_prompt(target: str = "", preferences: str = "", start: int = 10):
     for candidate in [DATA_DIR / "PROMPT.md", SCRIPTS_DIR / "PROMPT.md"]:
         if candidate.exists():
             content = candidate.read_text(encoding="utf-8")
@@ -197,6 +197,16 @@ def get_prompt(target: str = "", preferences: str = ""):
                     f"{preferences}\n"
                 )
                 content = content.replace("## Channel Numbering Scheme", inj + "\n## Channel Numbering Scheme")
+            if start != 10:
+                o = start - 10
+                content = content.replace("**10–19**", f"**{10+o}–{19+o}**")
+                content = content.replace("**20–29**", f"**{20+o}–{29+o}**")
+                content = content.replace("**30–49**", f"**{30+o}–{49+o}**")
+                content = content.replace("**50–69**", f"**{50+o}–{69+o}**")
+                content = content.replace("**70–79**", f"**{70+o}–{79+o}**")
+                content = content.replace('"number": 10,', f'"number": {10+o},')
+                content = content.replace('"number": 20,', f'"number": {20+o},')
+                content = content.replace('"number": 30,', f'"number": {30+o},')
             return {"content": content}
     raise HTTPException(404, "PROMPT.md not found")
 
@@ -238,8 +248,11 @@ async def validate(file: Optional[UploadFile] = File(None), content: Optional[st
 
 
 @router.post("/pipeline/no-ai")
-async def run_no_ai():
-    return _sse(_stream("generate_no_ai.py", [], "no_ai"))
+async def run_no_ai(start: int = Query(10)):
+    args = []
+    if start != 10:
+        args += ["--start", str(start)]
+    return _sse(_stream("generate_no_ai.py", args, "no_ai"))
 
 
 @router.post("/pipeline/collections")
@@ -263,15 +276,25 @@ async def run_probe(from_channel: Optional[str] = Query(None)):
 
 
 @router.post("/pipeline/deploy")
-async def run_deploy(from_channel: Optional[str] = Query(None)):
+async def run_deploy(from_channel: Optional[str] = Query(None), protected: str = Query(""), no_delete: bool = Query(False)):
     args = []
+    if no_delete:
+        args.append("--no-delete")
     if from_channel:
         args += ["--from", from_channel]
+    if protected:
+        args += ["--protect", protected]
     return _sse(_stream("create.py", args, "deploy"))
 
 
+class DeployRequest(BaseModel):
+    selections: list[DeploySelection]
+    protected_numbers: list[int] = []
+    no_delete: bool = False
+
+
 @router.post("/pipeline/deploy-selective")
-async def run_deploy_selective(selections: list[DeploySelection]):
+async def run_deploy_selective(req: DeployRequest):
     channels_path = DATA_DIR / "channels.json"
     if not channels_path.exists():
         raise HTTPException(404, "channels.json not found")
@@ -279,7 +302,7 @@ async def run_deploy_selective(selections: list[DeploySelection]):
     with open(channels_path, encoding="utf-8") as f:
         data = json.load(f)
 
-    sel_map = {s.original_number: s for s in selections if s.include}
+    sel_map = {s.original_number: s for s in req.selections if s.include}
     new_channels = [
         {**ch, "number": sel_map[ch["number"]].deploy_number}
         for ch in data.get("channels", [])
@@ -291,7 +314,12 @@ async def run_deploy_selective(selections: list[DeploySelection]):
     with open(temp_path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
 
-    return _sse(_stream("create.py", ["--json", "deploy_temp.json"], "deploy"))
+    args = ["--json", "deploy_temp.json"]
+    if req.no_delete:
+        args.append("--no-delete")
+    if req.protected_numbers:
+        args += ["--protect", ",".join(str(n) for n in req.protected_numbers)]
+    return _sse(_stream("create.py", args, "deploy"))
 
 
 @router.post("/pipeline/images")
