@@ -86,6 +86,10 @@ app.include_router(logs_router.router, prefix="/api")
 if STATIC_DIR.exists():
     app.mount("/assets", StaticFiles(directory=str(STATIC_DIR / "assets")), name="assets")
 
+    @app.get("/favicon.svg", include_in_schema=False)
+    async def favicon():
+        return Response(content=(STATIC_DIR / "favicon.svg").read_bytes(), media_type="image/svg+xml")
+
     @app.get("/{full_path:path}", include_in_schema=False)
     async def spa_fallback(full_path: str):
         return HTMLResponse(content=(STATIC_DIR / "index.html").read_text())
